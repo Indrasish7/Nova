@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Configuration & Secrets
+.env
+.env.*
+*.env
+
+# Pytest & Cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Nova Screenshots & Temp Artifacts
+nova_screenshots/
+*.png

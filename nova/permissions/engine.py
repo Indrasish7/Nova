@@ -156,7 +156,19 @@ class PermissionEngine:
             # 2. Check target process identity
             proc_name = get_foreground_process_name()
             app_ctx = (getattr(args, "application_context", "") or "").lower().strip()
-            if proc_name in PROTECTED_PROCESSES or any(p.replace(".exe", "") in app_ctx for p in PROTECTED_PROCESSES):
+            target_desc = (
+                getattr(args, "target_name", "") or 
+                getattr(args, "target_description", "") or ""
+            ).lower().strip()
+
+            is_protected = (
+                proc_name in PROTECTED_PROCESSES or
+                any(p.replace(".exe", "") in app_ctx for p in PROTECTED_PROCESSES) or
+                any(p.replace(".exe", "") in target_desc for p in PROTECTED_PROCESSES) or
+                ("task manager" in target_desc or "task manager" in app_ctx) or
+                ("taskmgr" in target_desc or "taskmgr" in app_ctx)
+            )
+            if is_protected:
                 return PermissionLevel.DANGEROUS
 
             # mouse_move is always SAFE
@@ -164,10 +176,6 @@ class PermissionEngine:
                 return PermissionLevel.SAFE
 
             # 3. Check for consequential action keywords in target description
-            target_desc = (
-                getattr(args, "target_name", "") or 
-                getattr(args, "target_description", "") or ""
-            ).lower()
             if any(kw in target_desc for kw in CONSEQUENTIAL_KEYWORDS):
                 return PermissionLevel.REQUIRES_CONFIRMATION
 

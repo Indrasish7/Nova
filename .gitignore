@@ -23,3 +23,12 @@ htmlcov/
 # Nova Screenshots & Temp Artifacts
 nova_screenshots/
 *.png
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

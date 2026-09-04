@@ -7,7 +7,7 @@ and canonical SemanticTarget / ResolutionResult objects for Phase B.6.
 
 from enum import Enum
 from typing import Optional, Dict, Any, Tuple, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DisplayInfo(BaseModel):
@@ -75,21 +75,50 @@ class SemanticTarget(BaseModel):
     confidence: float = Field(1.0, description="Resolution confidence score (0.0 to 1.0)")
 
 
+class ResolutionStatus(str, Enum):
+    """Formal resolution status distinguishing discrete terminal and fallback states."""
+    SUCCESS = "SUCCESS"
+    AMBIGUOUS = "AMBIGUOUS"
+    NOT_FOUND = "NOT_FOUND"
+    UNAVAILABLE = "UNAVAILABLE"
+    DISABLED = "DISABLED"
+    ERROR = "ERROR"
+
+
 class UIResolutionResult(BaseModel):
     """Structured result of UI Automation element resolution attempt."""
     success: bool = Field(..., description="Whether a matching UI element was resolved successfully")
+    status: ResolutionStatus = Field(ResolutionStatus.NOT_FOUND, description="Formal resolution status")
     element: Optional[UIElementMetadata] = Field(None, description="Resolved element metadata if successful")
+    candidates: List[UIElementMetadata] = Field(default_factory=list, description="Candidate elements matched")
     match_confidence: float = Field(0.0, description="Resolution confidence score (0.0 to 1.0)")
     disambiguation_count: int = Field(0, description="Count of candidate elements matched")
     error: Optional[str] = Field(None, description="Error message if resolution failed")
+
+    @model_validator(mode="after")
+    def _sync_status(self):
+        if self.success and self.status in [ResolutionStatus.NOT_FOUND, ResolutionStatus.UNAVAILABLE, ResolutionStatus.ERROR]:
+            self.status = ResolutionStatus.SUCCESS
+        elif not self.success and self.status == ResolutionStatus.SUCCESS:
+            self.status = ResolutionStatus.NOT_FOUND
+        return self
 
 
 class ResolutionResult(BaseModel):
     """Canonical multi-tier resolution result for TargetResolver."""
     success: bool = Field(..., description="Whether target was resolved")
+    status: ResolutionStatus = Field(ResolutionStatus.NOT_FOUND, description="Formal resolution status")
     target: Optional[SemanticTarget] = Field(None, description="Canonical SemanticTarget if resolved")
     resolver_source: Literal["uia", "vision", "physical_fallback"] = Field("uia", description="Resolution tier source")
     confidence: float = Field(0.0, description="Confidence score")
     candidates: List[SemanticTarget] = Field(default_factory=list, description="List of matched candidate targets")
     disambiguation_count: int = Field(0, description="Count of matching candidate targets")
     error: Optional[str] = Field(None, description="Error message if resolution failed")
+
+    @model_validator(mode="after")
+    def _sync_status(self):
+        if self.success and self.status in [ResolutionStatus.NOT_FOUND, ResolutionStatus.UNAVAILABLE, ResolutionStatus.ERROR]:
+            self.status = ResolutionStatus.SUCCESS
+        elif not self.success and self.status == ResolutionStatus.SUCCESS:
+            self.status = ResolutionStatus.NOT_FOUND
+        return self

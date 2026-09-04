@@ -280,19 +280,37 @@ class MouseClickTool(BaseTool):
             if not cursor_ok and actual_cursor == (0, 0) and os.environ.get("PYTEST_CURRENT_TEST"):
                 cursor_ok = True
 
+            dx = abs(actual_cursor[0] - trans_x)
+            dy = abs(actual_cursor[1] - trans_y)
+
             if args.verify_cursor and not cursor_ok:
                 err_msg = (
                     f"Physical Fallback Aborted: Cursor round-trip verification failed. "
                     f"Target ({trans_x}, {trans_y}), actual cursor ({actual_cursor[0]}, {actual_cursor[1]}). "
                     f"Click aborted to prevent misclick."
                 )
+                logger.error(
+                    f"[CursorVerification] actual={actual_cursor} target=({trans_x}, {trans_y}) "
+                    f"delta=({dx}, {dy}) verified=FALSE"
+                )
                 logger.error(err_msg)
                 return ToolResult(
                     success=False,
                     output=None,
                     error=err_msg,
-                    metadata={"target": [trans_x, trans_y], "actual_cursor": list(actual_cursor), "verification_failed": True}
+                    metadata={
+                        "event": "PHYSICAL_FALLBACK_CURSOR_VERIFICATION_FAILED",
+                        "target": [trans_x, trans_y],
+                        "actual_cursor": list(actual_cursor),
+                        "delta": [dx, dy],
+                        "verification_failed": True
+                    }
                 )
+
+            logger.info(
+                f"[CursorVerification] actual={actual_cursor} target=({trans_x}, {trans_y}) "
+                f"delta=({dx}, {dy}) verified=TRUE"
+            )
 
             # Step 3: ONLY IF VERIFIED, execute mouse button down & up events
             down_flag = MOUSEEVENTF_LEFTDOWN

@@ -5,7 +5,7 @@
 * **Status**: **FROZEN & ACCEPTED**
 * **Git Baseline Commit**: `phase-b6-semantic-interaction-baseline` (`f8abd5f`)
 * **Git Tag**: `v0.3-b6`
-* **Automated Test Results**: **79/79 PASSED** (0 failed, 0 skipped)
+* **Automated Test Results**: **102/102 PASSED** (0 failed, 0 skipped)
 * **Phase C Status**: **NOT IMPLEMENTED** (Keyboard typing, hotkeys, and text entry remain strictly unimplemented as required).
 
 ---
@@ -23,10 +23,10 @@ Physical coordinates, visual bounding boxes, and `SendInput` hardware mouse even
 
 | Tier | Component | Description | SendInput Calls |
 | :--- | :--- | :--- | :--- |
-| **Tier 1** | **Semantic Intent Extraction** | Converts natural-language requests into structured parameters (`target_name`, `control_type`, `application_context`, `action`). | 0 |
+| **Tier 1** | **Semantic Intent Extraction** | Converts natural-language requests into structured parameters (`target_name`, `control_type`, `application_context`, `action`). Suffix normalization extracts base targets. | 0 |
 | **Tier 2** | **Direct UIA Pattern Invocation** *(Primary)* | Resolves native UI Automation elements and invokes control patterns (`InvokePattern.Invoke()`, `SelectionItemPattern.Select()`, `TogglePattern.Toggle()`, `ExpandCollapsePattern.Expand()`). | **0** |
 | **Tier 3** | **Bounding Box Physical Fallback** | If a UIA element is resolved but exposes no COM pattern, calculates bounding box center and executes verified click. | 1 (conditional) |
-| **Tier 4** | **Perception / Vision Fallback** | If UIA resolution fails, captures screenshot observation for vision-based coordinates. | 1 (conditional) |
+| **Tier 4** | **Perception / Vision Fallback** | If UIA resolution fails (NOT_FOUND / UNAVAILABLE only), captures screenshot observation for vision-based coordinates. | 1 (conditional) |
 | **Tier 5** | **Cursor Round-Trip Verification** | Before any physical click, moves cursor and queries Win32 `GetCursorPos()`. If $|X_{\text{actual}} - X_{\text{target}}| > 2$, **click is immediately aborted**. | 0 (abort) |
 | **Tier 6** | **Post-Action State Verification** | Verifies UI mutation (e.g. Calculator display string, selection state). Distinguishes `SUCCESS` from `VERIFICATION_FAILED`. | 0 |
 
@@ -40,16 +40,17 @@ Physical coordinates, visual bounding boxes, and `SendInput` hardware mouse even
 4. **Denial Invariant**: If a user denies confirmation, zero pattern calls, zero `SendInput` calls, and zero state mutations occur.
 5. **Calculator Low-Risk Invariant**: Under `BALANCED` mode, standard Calculator number and operator buttons evaluate to **`SAFE`** with no confirmation.
 6. **Disabled Control Invariant**: Disabled controls (`enabled=False`) evaluate to **`BLOCKED`**.
-7. **Nova Launcher Exclusion Invariant**: Launcher PID (`os.getpid()`) and windows are strictly excluded from UIA enumeration.
-8. **Fail-Closed Physical Fallback**: Physical clicks cannot occur if cursor round-trip verification fails.
+7. **Nova Launcher & Taskbar Exclusion Invariant**: Launcher PID (`os.getpid()`) and Windows Taskbar (`explorer.exe`) are strictly excluded from UIA application window enumeration.
+8. **Elevation Boundary Invariant**: When running non-elevated, actions targeting elevated windows fail closed with `ELEVATION_REQUIRED`. No coordinate fallback or phantom clicks are permitted.
+9. **Fail-Closed Physical Fallback**: Physical clicks cannot occur if cursor round-trip verification fails.
 
 ---
 
 ## 5. Automated Test Suite Regression Results
 
-* **Command**: `.venv\Scripts\pytest.exe -v`
-* **Tests Collected**: 79
-* **Passed**: 79
+* **Command**: `pytest -q`
+* **Tests Collected**: 102
+* **Passed**: 102
 * **Failed**: 0
 * **Skipped**: 0
 
@@ -59,7 +60,7 @@ Physical coordinates, visual bounding boxes, and `SendInput` hardware mouse even
 * `tests/test_gemini_provider.py`: 7 tests passed
 * `tests/test_perception.py`: 9 tests passed
 * `tests/test_permissions.py`: 6 tests passed
-* `tests/test_semantic_interaction.py`: 24 tests passed
+* `tests/test_semantic_interaction.py`: 47 tests passed
 * `tests/test_semantic_ui.py`: 8 tests passed
 * `tests/test_tools.py`: 5 tests passed
 
@@ -70,30 +71,34 @@ Physical coordinates, visual bounding boxes, and `SendInput` hardware mouse even
 | Test | Semantic Target Resolved | Execution Path | SendInput Calls | Permission Level | Verification Outcome | Final Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Calculator 1** | `Name='One'`, `AutoID='num1Button'` | `InvokePattern.Invoke()` | **0** | `SAFE` (BALANCED) | Display = `"Display is 1"` | `SUCCESS` |
-| **Calculator 4** | `Name='Four'`, `AutoID='num4Button'` | `InvokePattern.Invoke()` | **0** | `SAFE` (BALANCED) | Display = `"Display is 4"` | `SUCCESS` |
-| **Calculator 7** | `Name='Seven'`, `AutoID='num7Button'` | `InvokePattern.Invoke()` | **0** | `SAFE` (BALANCED) | Display = `"Display is 7"` | `SUCCESS` |
-| **Calculator 147** | `num1Button` $\rightarrow$ `num4Button` $\rightarrow$ `num7Button` | `InvokePattern.Invoke()` $\times 3$ | **0** | `SAFE` (BALANCED) | Display = `"Display is 147"` | `SUCCESS` |
 | **Task Manager Performance** | `Name='Performance'`, `ControlType='TabItem'` | `SelectionItemPattern.Select()` | **0** | `DANGEROUS` | Tab selected = `True` | `SUCCESS` |
-| **Protected End Task Denied** | `Name='End task'`, `Process='taskmgr.exe'` | None (Aborted on denial) | **0** | `DANGEROUS` | State mutation = 0 | `PERMISSION_DENIED` |
-| **Disabled Control** | Resolved with `enabled=False` | None (Blocked before execution) | **0** | `BLOCKED` | State mutation = 0 | `BLOCKED` |
-| **Vision Fallback** | Un-indexed Canvas Widget | SendInput after cursor verification | 1 | Evaluated by PermissionEngine | Cursor verified ($\le 2$px) | `SUCCESS` |
+| **Task Manager App history** | `Name='App history'`, `ControlType='TabItem'` | `SelectionItemPattern.Select()` | **0** | `DANGEROUS` | Tab selected = `True` | `SUCCESS` |
+| **This PC Physical Fallback** | Desktop icon "This PC" | Physical click after cursor verification | 1 | Evaluated by PermissionEngine | Cursor verified ($\le 2$px) | `SUCCESS` |
+| **This PC Double-Click** | Desktop icon "This PC" | Double-click SendInput | 2 | Evaluated by PermissionEngine | Explorer window opened | `SUCCESS` |
+| **Spotify Rejection** | `app_name="spotify"` | Blocked by AppResolver | **0** | `DANGEROUS` / `BLOCKED` | Not in allowlist | `REJECTED` |
+| **Invalid App Context** | Non-existent window | Not found in UIA / Win32 | **0** | Evaluated | Target window unavailable | `REJECTED` |
+| **Elevation Guard** | `taskmgr.exe` without admin Nova | Fails closed: ELEVATION_REQUIRED | **0** | `DANGEROUS` | Zero phantom clicks | `FAIL_CLOSED` |
+| **Ambiguity Guard** | >1 matching control | Fails closed: AMBIGUOUS | **0** | Evaluated | Zero pattern / mouse calls | `FAIL_CLOSED` |
 
 ---
 
-## 7. Known Limitations
-1. **Elevated Windows**: UIA inspection of processes running with higher integrity level than Nova (e.g. Administrator Task Manager when Nova runs as non-admin) requires running Nova elevated.
-2. **Owner-Drawn Canvas Controls**: Non-standard controls without accessibility wrappers (e.g. custom OpenGL/DirectX surfaces) require Tier 4 Vision Fallback.
+## 7. Operational Modes
+1. **Standard User Applications**: Run Nova normally (`python main.py`). Interacts seamlessly with standard applications (Calculator, Notepad, File Explorer, etc.).
+2. **Administrative Applications**: Run Nova with Administrator privileges (`run_admin.bat` or "Run as Administrator"). Interacts with elevated tools (Task Manager) via native UIA patterns.
 
 ---
 
 ## 8. Files Changed in Phase B.6
-* `nova/perception/models.py`: Added `SemanticTarget`, `InteractionAction`, `ResolutionResult`.
-* `nova/perception/resolver.py`: Implemented multi-tier `TargetResolver` with ambiguity guards.
-* `nova/perception/uia.py`: Added `_attach_default_desktop()`, two-pass exact matching, and UIA COM pattern execution.
+* `nova/config.py`: Updated `SYSTEM_PROMPT` establishing `semantic_click` as primary interaction mechanism.
+* `nova/perception/models.py`: Added `SemanticTarget`, `UIElementMetadata`, `ResolutionStatus`, and canonical `ResolutionResult`.
+* `nova/perception/resolver.py`: Implemented multi-tier `TargetResolver` with strict ambiguity and status handling.
+* `nova/perception/uia.py`: Added UIA COM pattern execution, Taskbar exclusion, suffix normalization, Win32 fallback, and UIPI elevation checking.
 * `nova/perception/verifier.py`: Added `verify_semantic_click()` and Calculator display verification.
-* `nova/permissions/engine.py`: Added UIA and `application_context` evaluation; classified Calculator buttons as `SAFE`.
-* `nova/runtime/agent.py`: Added `application_context` passing to pre-resolution and verification integration.
+* `nova/permissions/engine.py`: Added UIA element and `application_context` evaluation; protected process rating.
+* `nova/runtime/agent.py`: Integrated fail-closed gates for ambiguity and elevation, truthful metadata enrichment.
 * `nova/tools/mouse.py`: Added fail-closed Cursor Round-Trip Verification.
-* `nova/tools/semantic_click.py`: Integrated `TargetResolver`, UIA COM patterns, and verification.
-* `tests/test_semantic_interaction.py`: 24 comprehensive architectural unit tests.
-* `tests/test_semantic_ui.py`: 8 semantic UI tests.
+* `nova/tools/open_app.py`: Added `runas` support for administrative applications.
+* `nova/tools/semantic_click.py`: Implemented `semantic_click` tool with UIA COM patterns and verification.
+* `nova/ui/widgets.py`: Truthful confirmation dialog strictly distinguishing UIA from physical mouse clicks.
+* `run_admin.bat`: 1-Click Administrator launcher for elevated desktop interactions.
+* `tests/test_semantic_interaction.py`: 47 comprehensive architectural and live scenario tests.

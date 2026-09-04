@@ -17,10 +17,11 @@ from nova.tools.base import BaseTool, ToolResult
 from nova.permissions.engine import PermissionEngine
 from nova.permissions.level import PermissionLevel, ActionContext
 from nova.config import Settings
-from nova.logger import log_agent_step, log_tool_decision, log_tool_execution
+from nova.logger import log_agent_step, log_tool_decision, log_tool_execution, logger
 from nova.perception.screen import ScreenPerception
 from nova.perception.verifier import ActionVerifier
 from nova.perception.uia import UIAutomationResolver
+from nova.perception.models import ResolutionStatus
 
 
 # Type alias for user confirmation callback
@@ -55,6 +56,7 @@ class Agent:
         self.permission_engine = permission_engine or PermissionEngine()
         self.confirmation_callback = confirmation_callback
         self.history: List[ChatMessage] = []
+        self.ambiguity_detected: bool = False
 
     def set_confirmation_callback(self, callback: ConfirmationCallback) -> None:
         """Set or update the UI interactive confirmation callback."""
@@ -65,6 +67,7 @@ class Agent:
         Execute full agent reasoning and action loop for a user request.
         """
         ctx = context or ActionContext()
+        self.ambiguity_detected = False
         
         # Inject System Prompt at conversation start if missing
         if not self.history or not any(msg.role == "system" for msg in self.history):
@@ -114,6 +117,20 @@ class Agent:
                     )
                     continue
 
+                # Execution Gate: Prohibit physical execution or vision if ambiguity was detected
+                if self.ambiguity_detected and tool.name in ["screen_observe", "mouse_move", "mouse_click", "mouse_double_click", "mouse_scroll"]:
+                    blocked_msg = (
+                        f"BLOCKED: Action '{tool.name}' is prohibited because target resolution was ambiguous. "
+                        "Physical execution and vision fallback are strictly forbidden for ambiguous targets."
+                    )
+                    logger.error(f"[ExecutionGate] {blocked_msg}")
+                    self.history.append(ChatMessage(role="tool", content=blocked_msg, tool_call_id=tool_call.id))
+                    return AgentStepResult(
+                        success=False,
+                        final_text=blocked_msg,
+                        tool_calls_executed=executed_tools
+                    )
+
                 # Capability check: Vision perception requirement check
                 if tool.name == "screen_observe" and not self.provider.supports_capability(ModelCapability.VISION):
                     err_msg = f"Model provider '{type(self.provider).__name__}' does not support vision capabilities."
@@ -147,7 +164,7 @@ class Agent:
                         control_type,
                         application_context=app_context
                     )
-                    if res.success:
+                    if res.status == ResolutionStatus.SUCCESS and res.element:
                         uia_element = res.element
 
                 # Permission Engine Evaluation (inspects tool + arguments + UIA element + context)
@@ -170,9 +187,57 @@ class Agent:
                 if perm_level in [PermissionLevel.REQUIRES_CONFIRMATION, PermissionLevel.DANGEROUS]:
                     approved = False
                     if self.confirmation_callback:
+                        enriched_args = dict(tool_call.arguments)
+                        if tool.name == "semantic_click":
+                            target_name = getattr(validated_args, "target_name", "")
+                            c_type = uia_element.control_type if uia_element else getattr(validated_args, "control_type", "Unknown")
+                            if c_type == "TabItem":
+                                action_str = "SELECT"
+                                pattern_str = "SelectionItemPattern.Select()"
+                            elif c_type == "CheckBox":
+                                action_str = "TOGGLE"
+                                pattern_str = "TogglePattern.Toggle()"
+                            else:
+                                action_str = getattr(validated_args, "action", "invoke").upper()
+                                pattern_str = "InvokePattern.Invoke()"
+
+                            enriched_args.update({
+                                "execution_type": "uia",
+                                "action": action_str,
+                                "target_name": target_name,
+                                "control_type": c_type,
+                                "application_context": getattr(validated_args, "application_context", "") or (uia_element.process_name if uia_element else "Foreground"),
+                                "process_name": uia_element.process_name if uia_element else "unknown",
+                                "execution_mechanism": "Windows UI Automation",
+                                "pattern": pattern_str,
+                                "physical_mouse": "NOT USED",
+                            })
+                        elif tool.name in ["mouse_click", "mouse_double_click", "mouse_scroll"]:
+                            target_desc_raw = getattr(validated_args, "target_description", "Custom Target") or "Custom Target"
+                            target_app_disp = None
+                            if "task manager" in target_desc_raw.lower() or "taskmgr" in target_desc_raw.lower():
+                                target_app_disp = "Task Manager (taskmgr.exe)"
+                            elif "calculator" in target_desc_raw.lower() or "calc" in target_desc_raw.lower():
+                                target_app_disp = "Calculator (calculatorapp.exe)"
+                            elif "notepad" in target_desc_raw.lower():
+                                target_app_disp = "Notepad (notepad.exe)"
+
+                            enriched_args.update({
+                                "execution_type": "physical_fallback",
+                                "action": "PHYSICAL_CLICK",
+                                "target_description": target_desc_raw,
+                                "application": target_app_disp or enriched_args.get("application"),
+                                "application_context": target_app_disp or enriched_args.get("application_context"),
+                                "process_name": target_app_disp or enriched_args.get("process_name"),
+                                "execution_mechanism": "Physical fallback via SendInput",
+                                "coordinates": f"X: {getattr(validated_args, 'x', 0)}, Y: {getattr(validated_args, 'y', 0)}",
+                                "cursor_verification": "Required (±2 px)",
+                                "physical_mouse": "USED",
+                            })
+
                         approved = self.confirmation_callback(
                             tool.name,
-                            tool_call.arguments,
+                            enriched_args,
                             perm_level
                         )
                     
@@ -276,6 +341,21 @@ class Agent:
                         image_path=img_path
                     )
                 )
+
+                # Fail Closed Gate: Stop immediately if ambiguity or elevation requirement was detected
+                if (
+                    tool_result.metadata.get("status") in ["AMBIGUOUS_TARGET", "ELEVATION_REQUIRED"]
+                    or (tool_result.error and any(k in tool_result.error for k in ["AMBIGUOUS_TARGET", "ELEVATION_REQUIRED"]))
+                ):
+                    if tool_result.metadata.get("status") == "AMBIGUOUS_TARGET" or (tool_result.error and "AMBIGUOUS_TARGET" in tool_result.error):
+                        self.ambiguity_detected = True
+                    err_msg = tool_result.error or "Action halted by fail-closed gate."
+                    logger.warning(f"[Agent] Fail-closed gate triggered in tool execution: {err_msg}")
+                    return AgentStepResult(
+                        success=False,
+                        final_text=err_msg,
+                        tool_calls_executed=executed_tools
+                    )
 
         return AgentStepResult(
             success=False,

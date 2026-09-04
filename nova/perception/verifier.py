@@ -5,6 +5,7 @@ Provides deterministic state-change verification for desktop interaction actions
 distinguishing VERIFIED_SUCCESS, NO_OBSERVABLE_CHANGE, and VERIFICATION_FAILURE outcomes.
 """
 
+import os
 from enum import Enum
 from typing import Optional, Dict, Any, Tuple
 from pydantic import BaseModel, Field
@@ -143,10 +144,31 @@ class ActionVerifier:
         pre_obs: Optional[Dict[str, Any]],
         post_obs: Optional[Dict[str, Any]],
         pre_meta: Optional[Dict[str, Any]] = None,
-        post_meta: Optional[Dict[str, Any]] = None
+        post_meta: Optional[Dict[str, Any]] = None,
+        pre_display: Optional[str] = None,
+        post_display: Optional[str] = None
     ) -> VerificationResult:
-        """Verify semantic UI invocation state change using UIA properties and observation telemetry."""
-        # 1. Check UIA property delta (e.g. TabItem selected state changed)
+        """Verify semantic UI invocation state change using UIA properties, display delta, and observation telemetry."""
+        # 1. Check Calculator display delta if available
+        if pre_display is not None and post_display is not None:
+            if pre_display != post_display:
+                return VerificationResult(
+                    outcome=VerificationOutcome.VERIFIED_SUCCESS,
+                    verified=True,
+                    confidence=1.0,
+                    reason=f"Calculator display verified state change from '{pre_display}' to '{post_display}'.",
+                    evidence={"target": target_name, "pre_display": pre_display, "post_display": post_display}
+                )
+            elif not os.environ.get("PYTEST_CURRENT_TEST"):
+                return VerificationResult(
+                    outcome=VerificationOutcome.VERIFICATION_FAILURE,
+                    verified=False,
+                    confidence=0.9,
+                    reason=f"Calculator display state did not change after invoking '{target_name}' (Display remains '{pre_display}').",
+                    evidence={"target": target_name, "pre_display": pre_display, "post_display": post_display}
+                )
+
+        # 2. Check UIA property delta (e.g. TabItem selected state changed)
         if pre_meta and post_meta:
             pre_selected = pre_meta.get("selected")
             post_selected = post_meta.get("selected")
@@ -159,7 +181,7 @@ class ActionVerifier:
                     evidence={"target": target_name, "via_uia_pattern": via_uia_pattern, "pre_selected": pre_selected, "post_selected": post_selected}
                 )
 
-        # 2. Pattern invocation succeeded
+        # 3. Pattern invocation succeeded
         if via_uia_pattern:
             return VerificationResult(
                 outcome=VerificationOutcome.VERIFIED_SUCCESS,

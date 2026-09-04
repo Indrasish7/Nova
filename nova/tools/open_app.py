@@ -46,11 +46,24 @@ class OpenAppTool(BaseTool):
             )
 
         try:
-            # Safe Windows launch using resolved executable via os.startfile (or subprocess.Popen fallback)
-            if hasattr(os, "startfile"):
-                os.startfile(resolved.executable)
-            else:
-                subprocess.Popen([resolved.executable], shell=False)
+            import ctypes
+            is_admin_app = resolved.executable.lower() in ["taskmgr.exe", "regedit.exe"]
+            verb = "runas" if is_admin_app else "open"
+            
+            launched = False
+            try:
+                ret = ctypes.windll.shell32.ShellExecuteW(None, verb, resolved.executable, None, None, 1)
+                if ret > 32:
+                    launched = True
+            except Exception:
+                pass
+
+            if not launched:
+                # Safe Windows launch fallback
+                if hasattr(os, "startfile"):
+                    os.startfile(resolved.executable)
+                else:
+                    subprocess.Popen([resolved.executable], shell=False)
 
             return ToolResult(
                 success=True,

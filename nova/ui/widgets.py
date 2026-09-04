@@ -60,38 +60,86 @@ class ConfirmationDialog(QDialog):
         # Action Details Frame
         details_frame = QFrame()
         details_frame.setStyleSheet(
-            "QFrame { background-color: #252526; border: 1px solid #3E3E42; border-radius: 6px; padding: 8px; }"
+            "QFrame { background-color: #252526; border: 1px solid #3E3E42; border-radius: 6px; padding: 10px; }"
         )
         details_layout = QVBoxLayout(details_frame)
         details_layout.setSpacing(6)
 
-        tool_label = QLabel(f"Action: <b>{self.tool_name}</b>")
-        tool_label.setFont(QFont("Segoe UI", 10))
-        details_layout.addWidget(tool_label)
+        is_uia = (self.tool_name == "semantic_click" or self.arguments.get("execution_type") == "uia")
+        is_physical = (
+            self.tool_name in ["mouse_click", "mouse_double_click", "mouse_scroll"] or
+            self.arguments.get("execution_type") == "physical_fallback"
+        )
 
-        # Mouse specific coordinate & target description details
-        if "x" in self.arguments and "y" in self.arguments:
-            coords_label = QLabel(f"Coordinates: <b>(X: {self.arguments['x']}, Y: {self.arguments['y']})</b>")
-            coords_label.setFont(QFont("Segoe UI", 10))
-            details_layout.addWidget(coords_label)
+        if is_uia:
+            # Semantic UIA Confirmation
+            action = self.arguments.get("action", "INVOKE").upper()
+            target = self.arguments.get("target_name") or self.arguments.get("target") or "Unknown"
+            c_type = self.arguments.get("control_type") or "Unknown"
+            app_ctx = self.arguments.get("application_context") or proc_name
+            p_name = self.arguments.get("process_name") or proc_name
+            pattern = self.arguments.get("pattern") or (
+                "SelectionItemPattern.Select()" if c_type == "TabItem" else "InvokePattern.Invoke()"
+            )
 
-        if "button" in self.arguments:
-            btn_label = QLabel(f"Mouse Button: <b>{self.arguments['button']}</b>")
-            btn_label.setFont(QFont("Segoe UI", 10))
-            details_layout.addWidget(btn_label)
+            details_layout.addWidget(QLabel(f"Action: <b>{action}</b>"))
+            details_layout.addWidget(QLabel(f"Target: <b>{target}</b>"))
+            details_layout.addWidget(QLabel(f"Control Type: <b>{c_type}</b>"))
+            details_layout.addWidget(QLabel(f"Application: <b>{app_ctx}</b>"))
+            details_layout.addWidget(QLabel(f"Process: <b>{p_name}</b>"))
+            
+            exec_lbl = QLabel("Execution:<br><b>Windows UI Automation</b>")
+            exec_lbl.setStyleSheet("color: #4EC9B0;")
+            details_layout.addWidget(exec_lbl)
 
-        if "target_description" in self.arguments and self.arguments["target_description"]:
-            desc_text = f"Target Description: <i>{self.arguments['target_description']}</i> <font color='#888888'>(Informational / Untrusted)</font>"
-            desc_label = QLabel(desc_text)
-            desc_label.setFont(QFont("Segoe UI", 9))
-            details_layout.addWidget(desc_label)
+            pat_lbl = QLabel(f"Pattern:<br><b>{pattern}</b>")
+            pat_lbl.setStyleSheet("color: #CE9178;")
+            details_layout.addWidget(pat_lbl)
 
-        # Raw arguments display
-        args_str = "\n".join(f"• {k}: {v}" for k, v in self.arguments.items() if k not in ["target_description"])
-        args_text = QLabel(f"Arguments:\n{args_str}")
-        args_text.setFont(QFont("Consolas", 9))
-        args_text.setStyleSheet("color: #CCCCCC;")
-        details_layout.addWidget(args_text)
+            mouse_lbl = QLabel("Physical Mouse: <b>NOT USED</b>")
+            mouse_lbl.setStyleSheet("color: #569CD6;")
+            details_layout.addWidget(mouse_lbl)
+
+        elif is_physical:
+            # Physical Fallback Confirmation
+            action = "PHYSICAL_CLICK"
+            target = self.arguments.get("target_description") or self.arguments.get("target") or "Custom Target"
+            app_ctx = self.arguments.get("application_context") or proc_name
+            coords_x = self.arguments.get("x", "Unknown")
+            coords_y = self.arguments.get("y", "Unknown")
+
+            details_layout.addWidget(QLabel(f"Action: <b>{action}</b>"))
+            details_layout.addWidget(QLabel(f"Target: <b>{target}</b>"))
+            details_layout.addWidget(QLabel(f"Application: <b>{app_ctx}</b>"))
+
+            exec_lbl = QLabel("Execution:<br><b>Physical fallback via SendInput</b>")
+            exec_lbl.setStyleSheet("color: #FF8C00;")
+            details_layout.addWidget(exec_lbl)
+
+            coords_lbl = QLabel(f"Coordinates:<br><b>X: {coords_x}<br>Y: {coords_y}</b>")
+            details_layout.addWidget(coords_lbl)
+
+            cursor_lbl = QLabel("Cursor Verification:<br><b>Required (±2 px)</b>")
+            details_layout.addWidget(cursor_lbl)
+
+            mouse_lbl = QLabel("Physical Mouse: <b>USED</b>")
+            mouse_lbl.setStyleSheet("color: #FF4D4D;")
+            details_layout.addWidget(mouse_lbl)
+
+        else:
+            # Generic Tool Confirmation
+            details_layout.addWidget(QLabel(f"Action: <b>{self.tool_name}</b>"))
+            args_str = "\n".join(
+                f"• {k}: {v}" for k, v in self.arguments.items()
+                if not k.startswith("_") and k != "target_description"
+            )
+            args_text = QLabel(f"Arguments:\n{args_str}")
+            args_text.setFont(QFont("Consolas", 9))
+            args_text.setStyleSheet("color: #CCCCCC;")
+            details_layout.addWidget(args_text)
+
+        perm_lbl = QLabel(f"Permission:<br><b>{self.permission_level.value.upper()}</b>")
+        details_layout.addWidget(perm_lbl)
 
         layout.addWidget(details_frame)
 
